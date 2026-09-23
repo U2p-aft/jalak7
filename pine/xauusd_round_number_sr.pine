@@ -1,0 +1,137 @@
+//@version=6
+// XAUUSD Round Number Support & Resistance (dioptimalkan untuk timeframe M5)
+// - Major level  : kelipatan $50  (mis. 3650, 3700, 3750)
+// - Minor level  : kelipatan $10  (mis. 3660, 3670, 3680)
+// - Micro level  : kelipatan $5   (opsional, untuk scalping)
+// Level di bawah harga = SUPPORT (hijau), di atas harga = RESISTANCE (merah).
+// Setiap level digambar sebagai zona (±ATR atau ± nilai tetap) dan diberi
+// jumlah "rejection" (wick menyentuh zona tapi candle ditutup di luar zona).
+indicator("XAUUSD Round Number S/R", shorttitle = "RN S/R", overlay = true, max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500, max_bars_back = 2000)
+
+// ───────────── Input ─────────────
+grpLvl     = "Level Round Number"
+majorStep  = input.float(50.0, "Major step ($)", minval = 1, group = grpLvl, tooltip = "Level psikologis utama, mis. 3650 / 3700")
+minorStep  = input.float(10.0, "Minor step ($)", minval = 0.5, group = grpLvl, tooltip = "Level round number kecil, mis. 3660 / 3670")
+showMicro  = input.bool(false, "Micro level", group = grpLvl, inline = "mc")
+microStep  = input.float(5.0, "step ($)", minval = 0.1, group = grpLvl, inline = "mc")
+levelsEach = input.int(5, "Jumlah level di atas & di bawah harga", minval = 1, maxval = 20, group = grpLvl)
+
+grpZone    = "Zona"
+zoneMode   = input.string("ATR", "Lebar zona", options = ["ATR", "Fixed"], group = grpZone)
+zoneAtrMul = input.float(0.3, "ATR multiplier (±)", minval = 0.05, step = 0.05, group = grpZone)
+atrLen     = input.int(14, "ATR length", minval = 1, group = grpZone)
+zoneFixed  = input.float(1.0, "Fixed zona ± ($)", minval = 0.05, step = 0.1, group = grpZone)
+
+grpHist    = "Rejection counter"
+showCount  = input.bool(true, "Tampilkan jumlah rejection", group = grpHist)
+lookback   = input.int(288, "Lookback (bar)", minval = 20, maxval = 1500, group = grpHist, tooltip = "288 bar M5 = 1 hari")
+
+grpStyle   = "Tampilan"
+colRes     = input.color(color.red, "Resistance", group = grpStyle, inline = "c")
+colSup     = input.color(color.green, "Support", group = grpStyle, inline = "c")
+rightBars  = input.int(20, "Perpanjang ke kanan (bar)", minval = 0, maxval = 400, group = grpStyle)
+showTable  = input.bool(true, "Tampilkan tabel S/R terdekat", group = grpStyle)
+
+// ───────────── Helper ─────────────
+atrVal = ta.atr(atrLen)
+zone   = zoneMode == "ATR" ? atrVal * zoneAtrMul : zoneFixed
+step   = showMicro ? microStep : minorStep
+
+isMultiple(float x, float s) =>
+    math.abs(x / s - math.round(x / s)) < 1e-6
+
+fmt(float x) =>
+    str.tostring(x, "#.##")
+
+// Wick menyentuh zona, tapi open & close tetap di sisi yang sama di luar zona.
+rejections(float lvl, float z) =>
+    int cnt = 0
+    int n = math.min(lookback, bar_index)
+    if n > 0
+        for i = 0 to n - 1
+            bool touch  = high[i] >= lvl - z and low[i] <= lvl + z
+            bool above  = open[i] > lvl + z and close[i] > lvl + z
+            bool below  = open[i] < lvl - z and close[i] < lvl - z
+            if touch and (above or below)
+                cnt += 1
+    cnt
+
+// ───────────── Drawing ─────────────
+var array<line>  lines  = array.new<line>()
+var array<box>   boxes  = array.new<box>()
+var array<label> labels = array.new<label>()
+var table        tbl    = table.new(position.top_right, 3, 5, bgcolor = color.new(color.black, 20), border_width = 1)
+
+if barstate.islast
+    while lines.size() > 0
+        lines.pop().delete()
+    while boxes.size() > 0
+        boxes.pop().delete()
+    while labels.size() > 0
+        labels.pop().delete()
+
+    float base  = math.floor(close / step) * step
+    float nearS = math.round_to_mintick(base)
+    float nearR = math.round_to_mintick(base + step)
+    int   xL    = math.max(0, bar_index - lookback)
+    int   xR    = bar_index + rightBars
+
+    for k = -(levelsEach - 1) to levelsEach
+        float lvl     = math.round_to_mintick(base + k * step)
+        bool  isRes   = lvl > close
+        bool  isMajor = isMultiple(lvl, majorStep)
+        bool  isMinor = isMultiple(lvl, minorStep)
+        bool  nearest = lvl == nearS or lvl == nearR
+        color col     = isRes ? colRes : colSup
+
+        int   width = isMajor ? 3 : isMinor ? 1 : 1
+        string sty  = isMajor ? line.style_solid : isMinor ? line.style_dashed : line.style_dotted
+        if nearest
+            width += 1
+
+        lines.push(line.new(xL, lvl, xR, lvl, color = color.new(col, isMajor ? 0 : 30), width = width, style = sty))
+        boxes.push(box.new(xL, lvl + zone, xR, lvl - zone, border_color = na, bgcolor = color.new(col, isMajor ? 80 : nearest ? 85 : 92)))
+
+        string tag = (isRes ? "R " : "S ") + fmt(lvl) + (isMajor ? " ★" : "")
+        if showCount
+            tag += "  x" + str.tostring(rejections(lvl, zone))
+        labels.push(label.new(xR, lvl, tag, style = label.style_label_left, color = color.new(col, 75), textcolor = col, size = isMajor ? size.normal : size.small))
+
+    if showTable
+        float majR = math.ceil(close / majorStep) * majorStep
+        float majS = math.floor(close / majorStep) * majorStep
+        majR := majR == close ? majR + majorStep : majR
+        table.cell(tbl, 0, 0, "Level", text_color = color.white)
+        table.cell(tbl, 1, 0, "Harga", text_color = color.white)
+        table.cell(tbl, 2, 0, "Jarak $", text_color = color.white)
+        table.cell(tbl, 0, 1, "Major R", text_color = colRes)
+        table.cell(tbl, 1, 1, fmt(majR), text_color = colRes)
+        table.cell(tbl, 2, 1, fmt(majR - close), text_color = colRes)
+        table.cell(tbl, 0, 2, "Nearest R", text_color = colRes)
+        table.cell(tbl, 1, 2, fmt(nearR), text_color = colRes)
+        table.cell(tbl, 2, 2, fmt(nearR - close), text_color = colRes)
+        table.cell(tbl, 0, 3, "Nearest S", text_color = colSup)
+        table.cell(tbl, 1, 3, fmt(nearS), text_color = colSup)
+        table.cell(tbl, 2, 3, fmt(close - nearS), text_color = colSup)
+        table.cell(tbl, 0, 4, "Major S", text_color = colSup)
+        table.cell(tbl, 1, 4, fmt(majS), text_color = colSup)
+        table.cell(tbl, 2, 4, fmt(close - majS), text_color = colSup)
+
+// ───────────── Alert ─────────────
+bool upMinor = math.floor(close / minorStep) > math.floor(close[1] / minorStep)
+bool dnMinor = math.floor(close / minorStep) < math.floor(close[1] / minorStep)
+bool upMajor = math.floor(close / majorStep) > math.floor(close[1] / majorStep)
+bool dnMajor = math.floor(close / majorStep) < math.floor(close[1] / majorStep)
+
+alertcondition(upMajor, "Break UP major round number", "XAUUSD close di atas major round number (resistance tembus)")
+alertcondition(dnMajor, "Break DOWN major round number", "XAUUSD close di bawah major round number (support tembus)")
+alertcondition(upMinor, "Break UP minor round number", "XAUUSD close di atas minor round number")
+alertcondition(dnMinor, "Break DOWN minor round number", "XAUUSD close di bawah minor round number")
+
+if upMajor
+    alert("XAUUSD break UP major " + fmt(math.floor(close / majorStep) * majorStep), alert.freq_once_per_bar_close)
+if dnMajor
+    alert("XAUUSD break DOWN major " + fmt(math.floor(close[1] / majorStep) * majorStep), alert.freq_once_per_bar_close)
+
+plotshape(upMajor, "Break up major", shape.triangleup, location.belowbar, colSup, size = size.small)
+plotshape(dnMajor, "Break down major", shape.triangledown, location.abovebar, colRes, size = size.small)
