@@ -1,0 +1,159 @@
+//@version=6
+// XAUUSD Key Support & Resistance (untuk timeframe 1H)
+// Level manual berasal dari analisa chart Daily XAUUSD (Capital.com) per 5 Okt 2026:
+//   harga 4,136.83 | EMA50 D 4,297.51 (harga di bawah, EMA menurun) | RSI14 D 38.25 < MA 43.13
+// Semua level bisa diubah lewat Settings. Ditambah pivot S/R otomatis dari chart 1H
+// dan EMA50 Daily sebagai resistance dinamis.
+indicator("XAUUSD Key S/R 1H", shorttitle = "XAU S/R 1H", overlay = true, max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500)
+
+// ───────────── Input: zona manual ─────────────
+grpR  = "Resistance (analisa Daily)"
+r1Top = input.float(4170.0, "R1 atas", group = grpR, inline = "r1")
+r1Bot = input.float(4160.0, "bawah", group = grpR, inline = "r1", tooltip = "High hari ini 4,163")
+r2Top = input.float(4240.0, "R2 atas", group = grpR, inline = "r2")
+r2Bot = input.float(4225.0, "bawah", group = grpR, inline = "r2", tooltip = "Wick tertinggi pantulan akhir September")
+r3Top = input.float(4305.0, "R3 atas", group = grpR, inline = "r3")
+r3Bot = input.float(4280.0, "bawah", group = grpR, inline = "r3", tooltip = "EMA50 Daily + area breakdown pertengahan September")
+r4Top = input.float(4410.0, "R4 atas", group = grpR, inline = "r4")
+r4Bot = input.float(4390.0, "bawah", group = grpR, inline = "r4", tooltip = "Konsolidasi awal September")
+
+grpS  = "Support (analisa Daily)"
+s1Top = input.float(4125.0, "S1 atas", group = grpS, inline = "s1")
+s1Bot = input.float(4115.0, "bawah", group = grpS, inline = "s1", tooltip = "Low hari ini 4,124")
+s2Top = input.float(4095.0, "S2 atas", group = grpS, inline = "s2")
+s2Bot = input.float(4080.0, "bawah", group = grpS, inline = "s2", tooltip = "Swing low akhir September")
+s3Top = input.float(4050.0, "S3 atas", group = grpS, inline = "s3")
+s3Bot = input.float(4040.0, "bawah", group = grpS, inline = "s3", tooltip = "Garis 4,046 + basis breakout awal Agustus")
+s4Top = input.float(3975.0, "S4 atas", group = grpS, inline = "s4")
+s4Bot = input.float(3940.0, "bawah", group = grpS, inline = "s4", tooltip = "Dasar range Juli (di bawah 4,000 psikologis)")
+
+// ───────────── Input: auto pivot & referensi ─────────────
+grpPiv  = "Auto pivot S/R"
+showPiv = input.bool(true, "Tampilkan pivot otomatis", group = grpPiv)
+pivLen  = input.int(10, "Pivot kiri/kanan (bar)", minval = 2, maxval = 50, group = grpPiv, tooltip = "Di 1H: 10 bar = ±10 jam")
+pivKeep = input.int(5, "Jumlah pivot high & low terakhir", minval = 1, maxval = 20, group = grpPiv)
+
+grpRef    = "Referensi"
+showEma   = input.bool(true, "EMA Daily", group = grpRef, inline = "e")
+emaLen    = input.int(50, "length", minval = 1, group = grpRef, inline = "e")
+rsiLen    = input.int(14, "RSI length (chart TF)", minval = 2, group = grpRef)
+
+grpStyle  = "Tampilan"
+colRes    = input.color(color.red, "Resistance", group = grpStyle, inline = "c")
+colSup    = input.color(color.green, "Support", group = grpStyle, inline = "c")
+leftBars  = input.int(300, "Mulai zona (bar ke belakang)", minval = 10, maxval = 4000, group = grpStyle)
+rightBars = input.int(30, "Perpanjang ke kanan (bar)", minval = 0, maxval = 400, group = grpStyle)
+showTable = input.bool(true, "Tampilkan tabel ringkasan", group = grpStyle)
+
+// ───────────── Helper ─────────────
+fmt(float x) =>
+    str.tostring(x, "#,###.##")
+
+emaD   = request.security(syminfo.tickerid, "D", ta.ema(close, emaLen))
+rsiVal = ta.rsi(close, rsiLen)
+plot(showEma ? emaD : na, "EMA Daily", color = color.blue, width = 2)
+
+// ───────────── Pivot otomatis ─────────────
+ph = ta.pivothigh(high, pivLen, pivLen)
+pl = ta.pivotlow(low, pivLen, pivLen)
+
+var array<float> phP = array.new<float>()
+var array<int>   phX = array.new<int>()
+var array<float> plP = array.new<float>()
+var array<int>   plX = array.new<int>()
+
+if not na(ph)
+    phP.push(ph)
+    phX.push(bar_index - pivLen)
+    if phP.size() > pivKeep
+        phP.shift()
+        phX.shift()
+if not na(pl)
+    plP.push(pl)
+    plX.push(bar_index - pivLen)
+    if plP.size() > pivKeep
+        plP.shift()
+        plX.shift()
+
+// ───────────── Drawing ─────────────
+var array<box>   boxes  = array.new<box>()
+var array<line>  lines  = array.new<line>()
+var array<label> labels = array.new<label>()
+var table        tbl    = table.new(position.top_right, 2, 7, bgcolor = color.new(color.black, 20), border_width = 1)
+
+if barstate.islast
+    while boxes.size() > 0
+        boxes.pop().delete()
+    while lines.size() > 0
+        lines.pop().delete()
+    while labels.size() > 0
+        labels.pop().delete()
+
+    int xL = math.max(0, bar_index - leftBars)
+    int xR = bar_index + rightBars
+
+    array<string> names = array.from("R4", "R3", "R2", "R1", "S1", "S2", "S3", "S4")
+    array<float>  tops  = array.from(r4Top, r3Top, r2Top, r1Top, s1Top, s2Top, s3Top, s4Top)
+    array<float>  bots  = array.from(r4Bot, r3Bot, r2Bot, r1Bot, s1Bot, s2Bot, s3Bot, s4Bot)
+
+    float nearR  = na
+    float nearS  = na
+    string nearRn = ""
+    string nearSn = ""
+
+    for i = 0 to names.size() - 1
+        float hi  = math.max(tops.get(i), bots.get(i))
+        float lo  = math.min(tops.get(i), bots.get(i))
+        // Warna mengikuti posisi harga saat ini: zona yang sudah ditembus berganti peran.
+        bool  isRes = lo > close
+        bool  inside = close >= lo and close <= hi
+        color col = inside ? color.orange : isRes ? colRes : colSup
+        boxes.push(box.new(xL, hi, xR, lo, border_color = color.new(col, 30), bgcolor = color.new(col, 85)))
+        labels.push(label.new(xR, (hi + lo) / 2, names.get(i) + "  " + fmt(lo) + " – " + fmt(hi), style = label.style_label_left, color = color.new(col, 75), textcolor = col, size = size.small))
+        if lo > close and (na(nearR) or lo < nearR)
+            nearR  := lo
+            nearRn := names.get(i)
+        if hi < close and (na(nearS) or hi > nearS)
+            nearS  := hi
+            nearSn := names.get(i)
+
+    // Guard size > 0: di Pine, "for i = 0 to -1" tetap berjalan (menghitung mundur).
+    if showPiv and phP.size() > 0
+        for i = 0 to phP.size() - 1
+            float p = phP.get(i)
+            color c = p > close ? colRes : colSup
+            lines.push(line.new(phX.get(i), p, xR, p, color = color.new(c, 30), width = 1, style = line.style_dotted))
+            labels.push(label.new(phX.get(i), p, "PH " + fmt(p), style = label.style_label_down, color = color.new(c, 100), textcolor = color.new(c, 20), size = size.tiny))
+    if showPiv and plP.size() > 0
+        for i = 0 to plP.size() - 1
+            float p = plP.get(i)
+            color c = p > close ? colRes : colSup
+            lines.push(line.new(plX.get(i), p, xR, p, color = color.new(c, 30), width = 1, style = line.style_dotted))
+            labels.push(label.new(plX.get(i), p, "PL " + fmt(p), style = label.style_label_up, color = color.new(c, 100), textcolor = color.new(c, 20), size = size.tiny))
+
+    if showTable
+        bool   bear    = close < emaD
+        string biasTxt = bear ? "BEARISH (di bawah EMA D)" : "BULLISH (di atas EMA D)"
+        color  biasCol = bear ? colRes : colSup
+        table.cell(tbl, 0, 0, "XAUUSD", text_color = color.white)
+        table.cell(tbl, 1, 0, fmt(close), text_color = color.white)
+        table.cell(tbl, 0, 1, "Bias", text_color = color.white)
+        table.cell(tbl, 1, 1, biasTxt, text_color = biasCol)
+        table.cell(tbl, 0, 2, "EMA" + str.tostring(emaLen) + " D", text_color = color.white)
+        table.cell(tbl, 1, 2, fmt(emaD) + "  (" + fmt(emaD - close) + ")", text_color = color.blue)
+        table.cell(tbl, 0, 3, "RSI" + str.tostring(rsiLen), text_color = color.white)
+        table.cell(tbl, 1, 3, str.tostring(rsiVal, "#.0"), text_color = rsiVal > 70 ? colRes : rsiVal < 30 ? colSup : color.white)
+        table.cell(tbl, 0, 4, "Nearest R", text_color = colRes)
+        table.cell(tbl, 1, 4, na(nearR) ? "-" : nearRn + " " + fmt(nearR) + "  (+" + fmt(nearR - close) + ")", text_color = colRes)
+        table.cell(tbl, 0, 5, "Nearest S", text_color = colSup)
+        table.cell(tbl, 1, 5, na(nearS) ? "-" : nearSn + " " + fmt(nearS) + "  (-" + fmt(close - nearS) + ")", text_color = colSup)
+        if timeframe.period != "60"
+            table.cell(tbl, 0, 6, "Catatan", text_color = color.orange)
+            table.cell(tbl, 1, 6, "Disarankan timeframe 1H", text_color = color.orange)
+
+// ───────────── Alert ─────────────
+alertcondition(ta.crossover(close, math.max(r1Top, r1Bot)), "Break UP R1", "XAUUSD close di atas R1")
+alertcondition(ta.crossover(close, math.max(r3Top, r3Bot)), "Break UP R3 (EMA50 D)", "XAUUSD close di atas R3 / EMA50 Daily — bias bisa berubah bullish")
+alertcondition(ta.crossunder(close, math.min(s1Top, s1Bot)), "Break DOWN S1", "XAUUSD close di bawah S1")
+alertcondition(ta.crossunder(close, math.min(s2Top, s2Bot)), "Break DOWN S2", "XAUUSD close di bawah S2 swing low — lanjut ke S3")
+alertcondition(ta.crossunder(close, math.min(s3Top, s3Bot)), "Break DOWN S3", "XAUUSD close di bawah S3 4,040 — target 4,000 / S4")
